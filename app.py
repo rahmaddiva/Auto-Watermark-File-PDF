@@ -1,38 +1,40 @@
 import os
-from flask import Flask, render_template, request, send_file
-from werkzeug.utils import secure_filename
-from watermark_pdf import watermark_image_to_pdf
 import fitz  # PyMuPDF
-from PIL import Image  # Tambahkan PIL untuk convert TIFF
+from flask import Flask, render_template, request, redirect, url_for, flash
+from werkzeug.utils import secure_filename
+from PIL import Image
+from watermark_pdf import watermark_image_to_pdf  # fungsi watermark Anda
 
 app = Flask(__name__)
+app.secret_key = 'your_secret_key'  # ganti dengan secret key Anda
+
 UPLOAD_FOLDER = 'uploads/'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'jpg', 'jpeg', 'png'}
+# Hanya PDF yang diizinkan
+app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# Pastikan folder uploads ada
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+    return (
+        '.' in filename and 
+        filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+    )
 
 def convert_pdf_to_tiff(pdf_path):
+    """Convert setiap halaman PDF menjadi TIFF dan simpan di folder bernama base PDF."""
     doc = fitz.open(pdf_path)
     base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-    folder_name = os.path.join(os.path.dirname(pdf_path), base_name)
+    tiff_folder = os.path.join(os.path.dirname(pdf_path), base_name)
+    os.makedirs(tiff_folder, exist_ok=True)
 
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-
-    for page_number in range(doc.page_count):
-        page = doc.load_page(page_number)
+    for i in range(doc.page_count):
+        page = doc.load_page(i)
         pix = page.get_pixmap(dpi=300)
-
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-        output_tiff_path = os.path.join(folder_name, f"page_{page_number + 1}.tiff")
-        img.save(output_tiff_path, format="TIFF")
+        tiff_path = os.path.join(tiff_folder, f"page_{i+1}.tiff")
+        img.save(tiff_path, format="TIFF")
 
     doc.close()
 
@@ -43,38 +45,38 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_files():
     pdf_files = request.files.getlist('pdf_files')
-    watermark_image = request.files['watermark_image']
 
-    if not pdf_files or watermark_image.filename == '':
-        return "No file selected", 400
+    if not pdf_files or pdf_files[0].filename == '':
+        flash('Tidak ada file PDF yang dipilih.', 'danger')
+        return redirect(url_for('index'))
 
-    wm_name = secure_filename(watermark_image.filename)
-    wm_path = os.path.join(app.config['UPLOAD_FOLDER'], wm_name)
-    watermark_image.save(wm_path)
+    # path watermark yang fixed
+    wm_path = os.path.join(app.config['UPLOAD_FOLDER'], 'temp_watermark.png')
+    if not os.path.exists(wm_path):
+        flash('File watermark (temp_watermark.png) tidak ditemukan di folder uploads/.', 'danger')
+        return redirect(url_for('index'))
 
-    output_files = []
     for pdf in pdf_files:
         if pdf and allowed_file(pdf.filename):
-            pdf_name = secure_filename(pdf.filename)
-            pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_name)
+            filename = secure_filename(pdf.filename)
+            pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             pdf.save(pdf_path)
 
-            out_pdf = pdf_name.replace('.pdf', '_watermarked.pdf')
-            out_pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], out_pdf)
-            
-            # Watermark-kan PDF
-            watermark_image_to_pdf(pdf_path, wm_path, out_pdf_path)
-            
-            # Hapus file PDF asli
+            # nama dan path output watermarked PDF
+            out_name = filename.replace('.pdf', '_watermarked.pdf')
+            out_pdf = os.path.join(app.config['UPLOAD_FOLDER'], out_name)
+
+            # proses watermark
+            watermark_image_to_pdf(pdf_path, wm_path, out_pdf)
+
+            # hapus PDF asli
             os.remove(pdf_path)
 
-            # === CONVERT WATERMARKED PDF KE TIFF ===
-            convert_pdf_to_tiff(out_pdf_path)
+            # convert ke TIFF
+            convert_pdf_to_tiff(out_pdf)
 
-            output_files.append(out_pdf_path)
-
-    # Kirim file hasil watermark pertama
-    return send_file(output_files[0], as_attachment=True)
+    flash('Proses berhasil! PDF di-watermark dan dikonversi ke TIFF.', 'success')
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -61,7 +61,6 @@ def upload_files():
             filename = secure_filename(pdf.filename)
             pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             pdf.save(pdf_path)
-
             # nama dan path output watermarked PDF
             out_name = filename.replace('.pdf', '_watermarked.pdf')
             out_pdf = os.path.join(app.config['UPLOAD_FOLDER'], out_name)
@@ -71,7 +70,6 @@ def upload_files():
 
             # hapus PDF asli
             os.remove(pdf_path)
-
             # convert ke TIFF
             convert_pdf_to_tiff(out_pdf)
 
